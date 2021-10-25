@@ -1,5 +1,57 @@
-	//SPDX-License-Identifier: MIT
-	pragma solidity 0.6.12;
+//SPDX-License-Identifier: MIT
+pragma solidity ^0.6.12;
+
+/**
+ * @dev Contract module that helps prevent reentrant calls to a function.
+ *
+ * Inheriting from `ReentrancyGuard` will make the {nonReentrant} modifier
+ * available, which can be applied to functions to make sure there are no nested
+ * (reentrant) calls to them.
+ *
+ * Note that because there is a single `nonReentrant` guard, functions marked as
+ * `nonReentrant` may not call one another. This can be worked around by making
+ * those functions `private`, and then adding `external` `nonReentrant` entry
+ * points to them.
+ *
+ * TIP: If you would like to learn more about reentrancy and alternative ways
+ * to protect against it, check out our blog post
+ * https://blog.openzeppelin.com/reentrancy-after-istanbul/[Reentrancy After Istanbul].
+ */
+contract ReentrancyGuard {
+    bool private _notEntered;
+
+    constructor () internal {
+        // Storing an initial non-zero value makes deployment a bit more
+        // expensive, but in exchange the refund on every call to nonReentrant
+        // will be lower in amount. Since refunds are capped to a percetange of
+        // the total transaction's gas, it is best to keep them low in cases
+        // like this one, to increase the likelihood of the full refund coming
+        // into effect.
+        _notEntered = true;
+    }
+
+    /**
+     * @dev Prevents a contract from calling itself, directly or indirectly.
+     * Calling a `nonReentrant` function from another `nonReentrant`
+     * function is not supported. It is possible to prevent this from happening
+     * by making the `nonReentrant` function external, and make it call a
+     * `private` function that does the actual work.
+     */
+    modifier nonReentrant() {
+        // On the first call to nonReentrant, _notEntered will be true
+        require(_notEntered, "ReentrancyGuard: reentrant call");
+
+        // Any calls to nonReentrant after this point will fail
+        _notEntered = false;
+
+        _;
+
+        // By storing the original value once again, a refund is triggered (see
+        // https://eips.ethereum.org/EIPS/eip-2200)
+        _notEntered = true;
+    }
+}
+ 
 	library SafeKRC20 {
 	    using SafeMath for uint256;
 	    using Address for address;
@@ -1095,46 +1147,8 @@
 	        return uint256(_at(set._inner, index));
 	    }
 	}
-	/**
- * @dev Contract module that helps prevent reentrant calls to a function.
- *
- * Inheriting from `ReentrancyGuard` will make the {nonReentrant} modifier
- * available, which can be applied to functions to make sure there are no nested
- * (reentrant) calls to them.
- *
- * Note that because there is a single `nonReentrant` guard, functions marked as
- * `nonReentrant` may not call one another. This can be worked around by making
- * those functions `private`, and then adding `external` `nonReentrant` entry
- * points to them.
- *
- * TIP: If you would like to learn more about reentrancy and alternative ways
- * to protect against it, check out our blog post
- * https://blog.openzeppelin.com/reentrancy-after-istanbul/[Reentrancy After Istanbul].
- */
-abstract contract ReentrancyGuard {
-    uint256 private constant _NOT_ENTERED = 1;
-    uint256 private constant _ENTERED = 2;
 
-    uint256 private _status;
 
-    constructor() internal {
-        _status = _NOT_ENTERED;
-    }
-
-    /**
-     * @dev Prevents a contract from calling itself, directly or indirectly.
-     * Calling a `nonReentrant` function from another `nonReentrant`
-     * function is not supported. It is possible to prevent this from happening
-     * by making the `nonReentrant` function external, and make it call a
-     * `private` function that does the actual work.
-     */
-    modifier nonReentrant() {
-        require(_status != _ENTERED, "ReentrancyGuard: reentrant call");
-        _status = _ENTERED;
-        _;
-        _status = _NOT_ENTERED;
-    }
-}
 	// KuSwap token with Governance.
 	contract KUSToken is KRC20('KuSwap', 'KUS') {
 	    using EnumerableSet for EnumerableSet.AddressSet;
@@ -1468,7 +1482,7 @@ abstract contract ReentrancyGuard {
 	    // Total allocation poitns. Must be the sum of all allocation points in all pools.
 	    uint256 public totalAllocPoint = 0;
 	    // The block number when KUS mining starts.
-	    uint256 public startBlock;
+	    uint256 public immutable startBlock;
 	    // Deposited amount KUS in MasterChef
 	    uint256 public depositedKus;
 	
@@ -1513,12 +1527,13 @@ abstract contract ReentrancyGuard {
 	        kuVaultPercent = _kuVaultPercent;
 	        comPercent = _comPercent;
 	        lastBlockDevWithdraw = _startBlock;
-	        
+	        uint256 totalPer = _stakingPercent.add(_devPercent).add(_kuVaultPercent).add(_comPercent);
+	        require(totalPer == percentDec, "Must total to 1000000");
 	        // staking pool
 	        poolInfo.push(PoolInfo({
 	            lpToken: _KUS,
 	            allocPoint: 1000,
-	            lastRewardBlock: startBlock,
+	            lastRewardBlock: _startBlock,
 	            accKUSPerShare: 0
 	        }));
 	
@@ -1605,7 +1620,7 @@ abstract contract ReentrancyGuard {
 	    }
 	
 	    // Update reward variables of the given pool to be up-to-date.
-	    function updatePool(uint256 _pid) public nonReentrant {
+	    function updatePool(uint256 _pid) public PoolValidation(_pid) {
 	        PoolInfo storage pool = poolInfo[_pid];
 	        if (block.number <= pool.lastRewardBlock) {
 	            return;
@@ -1626,7 +1641,7 @@ abstract contract ReentrancyGuard {
 	    }
 	
 	    // Deposit LP tokens to MasterChef for KUS allocation.
-	    function deposit(uint256 _pid, uint256 _amount) public nonReentrant {
+	    function deposit(uint256 _pid, uint256 _amount) external PoolValidation(_pid) nonReentrant  {
 	        require (_pid != 0, 'deposit KUS by staking');
 	        PoolInfo storage pool = poolInfo[_pid];
 	        UserInfo storage user = userInfo[_pid][msg.sender];
@@ -1642,13 +1657,13 @@ abstract contract ReentrancyGuard {
 	    }
 	
 	    // Withdraw LP tokens from MasterChef.
-	    function withdraw(uint256 _pid, uint256 _amount) public nonReentrant {
+	    function withdraw(uint256 _pid, uint256 _amount) external PoolValidation(_pid) nonReentrant {
 	        require (_pid != 0, 'withdraw KUS by unstaking');
 	        PoolInfo storage pool = poolInfo[_pid];
 	        UserInfo storage user = userInfo[_pid][msg.sender];
 	        require(user.amount >= _amount, "withdraw: not good");
 	        updatePool(_pid);
-	        uint256 pending = user.amount.mul(pool.accKUSPerShare).div(1e12).sub(user.rewardDebt);
+	        uint256 pending = user.amount.mul(pool.accKUSPerShare).div(1e12).sub(user.rewardDebt); 
 	        safeKUSTransfer(msg.sender, pending);
 	        user.amount = user.amount.sub(_amount);
 	        user.rewardDebt = user.amount.mul(pool.accKUSPerShare).div(1e12);
@@ -1657,7 +1672,7 @@ abstract contract ReentrancyGuard {
 	    }
 	
 	        // Stake KUS tokens to MasterChef
-	    function enterStaking(uint256 _amount) public nonReentrant {
+	    function enterStaking(uint256 _amount) external PoolValidation(0) nonReentrant   {
 	        PoolInfo storage pool = poolInfo[0];
 	        UserInfo storage user = userInfo[0][msg.sender];
 	        updatePool(0);
@@ -1677,7 +1692,7 @@ abstract contract ReentrancyGuard {
 	    }
 	
 	    // Withdraw KUS tokens from STAKING.
-	    function leaveStaking(uint256 _amount) public nonReentrant {
+	    function leaveStaking(uint256 _amount) external PoolValidation(0) nonReentrant   {
 	        PoolInfo storage pool = poolInfo[0];
 	        UserInfo storage user = userInfo[0][msg.sender];
 	        require(user.amount >= _amount, "withdraw: not good");
@@ -1696,7 +1711,7 @@ abstract contract ReentrancyGuard {
 	    }
 	
 	    // Want to withdraw without caring about KUS rewards? EMERGENCY ONLY.
-	    function emergencyWithdraw(uint256 _pid) public  {
+	    function emergencyWithdraw(uint256 _pid) external PoolValidation(_pid) nonReentrant   {
 	        PoolInfo storage pool = poolInfo[_pid];
 	        UserInfo storage user = userInfo[_pid][msg.sender];
 	        pool.lpToken.safeTransfer(address(msg.sender), user.amount);
@@ -1721,12 +1736,10 @@ abstract contract ReentrancyGuard {
 	    function setDevAddress(address _devaddr) public onlyOwner {
 	        devaddr = _devaddr;
             emit SetDevAddress(_devaddr);
-
 	    }
 	     function setComAddress(address _comaddr) public onlyOwner {
 	        comAddr = _comaddr;
             emit SetComAddress(_comaddr);
-
 	    }
 
 	    function updateKusPerBlock(uint256 newAmount) public onlyOwner {
@@ -1734,6 +1747,5 @@ abstract contract ReentrancyGuard {
 	        require(newAmount >= 1 * 1e18, 'Min per block 1 KUS');
 	        KUSPerBlock = newAmount;
             emit UpdateKusPerBlock(newAmount);
-
 	    }
 	}
